@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 import { Citation, TurnMode, getMessages, insertMessage, insertTurnMetric } from "../db";
 import { chatWithFallback, runWithTools } from "../providers";
 import { ChatMessage, ToolEvent, ToolRun } from "../providers/types";
-import { SearchOutcome, WEB_SEARCH_TOOL, formatForTool, groundingTool, webSearch } from "../search";
+import { MAX_RESULTS, SearchOutcome, WEB_SEARCH_TOOL, formatForTool, groundingTool, webSearch } from "../search";
 import { ClaimView } from "./claims";
 import { planTurn } from "./plan";
 
@@ -16,6 +16,8 @@ Memory:
 - Never restate a fact marked STALE as if it were current. If fresh evidence is supplied above, use it and
   cite it. If it isn't, say plainly that you could not confirm it just now — do not guess.
 - When you can see both an older value and a newer one, say what changed and when it changed.
+- Address every claim in that block. If you could not check one, name it and say it is unverified;
+  never drop a subject quietly.
 - Never claim to remember something that is not in your context. If the user refers to something you don't
   have, say so instead of inventing it.
 
@@ -69,6 +71,62 @@ function delay(ms: number): Promise<null> {
   return new Promise((resolve) => setTimeout(() => resolve(null), ms));
 }
 
+/**
+ * Evidence for a turn, grouped by the query that produced it. Two per query, so a
+ * six-claim turn sees something about every claim instead of the first query's
+ * five pages crowding out the other five subjects.
+ */
+function mergeEvidence(
+  runs: { query: string; outcome: SearchOutcome }[]
+): { query: string; results: Citation[] }[] {
+  const seen = new Set<string>();
+  const groups = runs
+    .filter((r) => r.outcome.ok)
+    .map((r) => ({ query: r.query, pool: r.outcome.results, results: [] as Citation[] }));
+
+  const PER_QUERY = 2;
+  const MAX = 12;
+  for (let rank = 0; rank < MAX_RESULTS && groups.some((g) => rank < g.pool.length); rank++) {
+    for (const g of groups) {
+      if (seen.size >= MAX) break;
+      const r = g.pool[rank];
+      if (!r || !r.url || seen.has(r.url) || g.results.length >= PER_QUERY) continue;
+      seen.add(r.url);
+      g.results.push(r);
+    }
+  }
+  return groups.filter((g) => g.results.length > 0);
+}
+
+/** Numbering must match the flat citation list that ships to the client. */
+function formatEvidence(groups: { query: string; results: Citation[] }[]): string {
+  let n = 0;
+  return groups
+    .map((g) => {
+      const body = g.results
+        .map((c) => `[${++n}] ${c.title} — ${c.url}\n${(c.snippet ?? "").slice(0, 300)}`)
+        .join("\n\n");
+      return `For "${g.query}":\n${body}`;
+    })
+    .join("\n\n");
+}
+
+/**
+ * One citation list for N searches. The model cites against a single list, so the
+ * same pricing page found by two queries must not appear twice.
+ */
+function mergeCitations(results: Citation[]): Citation[] {
+  const seen = new Set<string>();
+  const out: Citation[] = [];
+  for (const r of results) {
+    if (!r.url || seen.has(r.url)) continue;
+    seen.add(r.url);
+    out.push(r);
+    if (out.length >= 12) break;
+  }
+  return out;
+}
+
 export async function* runAgent(
   conversationId: string,
   userMessage: string,
@@ -97,26 +155,53 @@ export async function* runAgent(
   //    the model call and let the two overlap instead of running back to back.
   //    VERIFY means "a stored claim is stale"; presearch means "the question is
   //    inherently live and we hold no claim". Both save a full model round trip.
-  let searchP: Promise<SearchOutcome> | null = null;
-  if (plan.mode === "verify" && plan.query) {
-    searchP = webSearch({ userId, query: plan.query });
-    yield { type: "status", label: "Checking whether that's still true…" };
+  //    A turn about several claims dispatches one search each, in parallel.
+  const searches = new Map<string, Promise<SearchOutcome>>();
+  // Insertion order is the planner's claim order, which is what keeps the evidence
+  // round-robin fair across claims.
+  const ordered: { query: string; promise: Promise<SearchOutcome> }[] = [];
+  const dispatch = (query: string) => {
+    if (!query || searches.has(query)) return;
+    const promise = webSearch({ userId, query });
+    searches.set(query, promise);
+    ordered.push({ query, promise });
+  };
+
+  if (plan.queries.length > 0) {
+    for (const q of plan.queries) dispatch(q);
+    yield {
+      type: "status",
+      label:
+        plan.queries.length > 1
+          ? `Checking ${plan.queries.length} of them…`
+          : "Checking whether that's still true…",
+    };
   } else if (plan.presearchQuery) {
-    searchP = webSearch({ userId, query: plan.presearchQuery });
+    dispatch(plan.presearchQuery);
     yield { type: "status", label: "Checking live sources…" };
   }
 
   // A fast search is injected into the prompt directly — one model call, grounded.
-  // Only a search that overruns the budget is left for the model to pull via the
-  // tool (served from this same promise, so it is never fetched twice).
+  // Only searches that overrun the budget are left for the model to pull through
+  // the tool (served from these same promises, so nothing is fetched twice).
   const searchStarted = Date.now();
-  const evidence: SearchOutcome | null = searchP ? await Promise.race([searchP, delay(SEARCH_WAIT_MS)]) : null;
-  const searchMs = evidence ? Date.now() - searchStarted : 0;
+  const settled = ordered.length
+    ? await Promise.race([Promise.allSettled(ordered.map((o) => o.promise)), delay(SEARCH_WAIT_MS).then(() => null)])
+    : [];
+  const runs = (settled ?? [])
+    .map((r, i) =>
+      r.status === "fulfilled" ? { query: ordered[i].query, outcome: r.value } : null
+    )
+    .filter((r): r is { query: string; outcome: SearchOutcome } => r !== null);
+  const searchMs = ordered.length > 0 ? Date.now() - searchStarted : 0;
 
-  let citations: Citation[] = evidence?.ok ? evidence.results : [];
-  let usedSearch = Boolean(evidence?.ok);
-  let searchSource = evidence?.source ?? "none";
-  let searchNote: string | undefined = evidence && !evidence.ok ? evidence.reason : undefined;
+  const evidence = mergeEvidence(runs);
+  let citations = mergeCitations(evidence.flatMap((g) => g.results));
+  let usedSearch = runs.some((r) => r.outcome.ok);
+  let searchSource = runs.find((r) => r.outcome.ok)?.outcome.source ?? "none";
+  let searchNote: string | undefined = usedSearch
+    ? undefined
+    : runs.find((r) => !r.outcome.ok)?.outcome.reason;
 
   // 4. Assemble the prompt.
   const parts: string[] = [];
@@ -134,11 +219,11 @@ export async function* runAgent(
       "The user is asking whether this changed. If you can see an earlier value and a current one, state what changed and when."
     );
   }
-  if (evidence?.ok) {
-    parts.push("Live web results (cite as [1], [2]...):\n" + formatForTool(evidence.results));
-  } else if (evidence && !evidence.ok) {
+  if (usedSearch || citations.length > 0) {
+    parts.push("Live web results, checked just now, grouped by the claim they were fetched for (cite as [1], [2]...):\n" + formatEvidence(evidence));
+  } else if (runs.length > 0) {
     parts.push(
-      `(Live verification was needed but unavailable: ${evidence.reason}. Tell the user you couldn't confirm this just now instead of guessing.)`
+      `(Live verification was needed but unavailable: ${searchNote}. Tell the user you couldn't confirm this just now instead of guessing.)`
     );
   }
 
@@ -161,7 +246,7 @@ export async function* runAgent(
    * - ANSWER: tool, so the model can decide.
    */
   const tools: unknown[] = [];
-  if (plan.mode !== "recall" && !evidence?.ok) {
+  if (plan.mode !== "recall" && !usedSearch) {
     tools.push(WEB_SEARCH_TOOL);
     const grounding = groundingTool();
     if (grounding) tools.push(grounding);
@@ -236,13 +321,14 @@ export async function* runAgent(
         // A pre-dispatched search is already about this user's question, so reuse
         // it rather than paying for a second identical lookup. The model's own
         // query only matters when no search was started ahead of time.
-        const res = searchP ? await searchP : await webSearch({ userId, query });
+        const known = searches.get(query);
+        const res = known ? await known : await webSearch({ userId, query });
         toolMs = Date.now() - toolStart;
         searchSource = res.source;
 
         if (res.ok) {
           usedSearch = true;
-          citations = res.results;
+          citations = mergeCitations([...citations, ...res.results]);
         } else {
           searchNote = res.reason;
         }

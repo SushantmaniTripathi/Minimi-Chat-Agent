@@ -251,11 +251,13 @@ function humanAge(hours: number): string {
 
 /**
  * Three tight lines beat six truncated chat messages: fewer input tokens, lower
- * TTFT, and the model can see *when* each fact was true.
+ * TTFT, and the model can see *when* each fact was true. The cap is generous
+ * enough for a five-tool shortlist with price and news (seven claims), because a
+ * claim that never reaches the prompt is a subject the answer silently omits.
  */
 export function formatClaimsForPrompt(claims: ClaimRow[], now: Date): string {
   if (claims.length === 0) return "";
-  const lines = claims.slice(0, 6).map((c) => {
+  const lines = claims.slice(0, 10).map((c) => {
     const age = humanAge(Math.round(claimAgeHours(c, now)));
     const gov =
       c.verify_policy === "never"

@@ -5,6 +5,7 @@ const PREDICATES = new Set([
   "price",
   "availability",
   "version",
+  "news",
   "ceo",
   "address",
   "headcount",
@@ -34,11 +35,15 @@ Rules:
   It must be something the USER named or asked about — never an incidental item the answer happened to list.
   A follow-up like "has that changed since then?" is still about the earlier subject; extract that subject, not the pronoun.
 - kind: one of product | org | person | place | topic | self
-- predicate: one of price | availability | version | ceo | address | headcount | user_role | user_preference | release_date
+- predicate: one of price | availability | version | news | ceo | address | headcount | user_role | user_preference | release_date
 - value: the shortest standalone value, e.g. "$20/mo", "2026-11-03", "Satya Nadella", "founder"
+- news: a product or company announcement the answer reports — a launch, a major feature,
+  funding, an acquisition, a leadership change. Keep the value to one clause, e.g.
+  "launched AI agents for sales teams". Do not record ordinary marketing copy as news.
 - Use kind "self" and predicate "user_role"/"user_preference" for facts the USER states about themselves.
 - Only facts explicitly stated in the turn. No opinions, no predictions, no facts about the assistant.
-- At most 3 claims. If there is nothing durable, return {"claims":[]}.`;
+- At most 6 claims — a shortlist of five tools should produce five price claims, not one.
+  If there is nothing durable, return {"claims":[]}.`;
 
 interface ExtractedClaim {
   entity: string;
@@ -62,6 +67,10 @@ function parseClaims(raw: string): ExtractedClaim[] {
         value: c.value.trim().slice(0, 120),
       }))
       .filter((c: ExtractedClaim) => c.entity.length >= 2 && c.value.length > 0 && PREDICATES.has(c.predicate))
+      // A price is a figure or "free". The model otherwise records prose like
+      // "usage-based, no fixed base fee" as a price, and that sentence then
+      // re-enters later prompts as if it were a stored fact.
+      .filter((c: ExtractedClaim) => c.predicate !== "price" || /\d|free/i.test(c.value))
       // Only one active claim may exist per (entity, predicate). The extractor
       // often lists several figures (monthly and annual price); keeping the first
       // preserves the headline value instead of letting the last one overwrite it.
@@ -144,7 +153,7 @@ export async function extractClaims(opts: {
     );
     if (claims.length === 0) return;
 
-    for (const c of claims.slice(0, 3)) {
+    for (const c of claims.slice(0, 6)) {
       const isSelf = c.kind === "self";
       const entity = upsertEntity(
         opts.userId,

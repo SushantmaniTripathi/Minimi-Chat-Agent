@@ -112,7 +112,6 @@ export function groundingTool(): Record<string, unknown> | null {
 
 export function formatForTool(citations: Citation[]): string {
   return citations
-    .slice(0, MAX_RESULTS)
     .map((c, i) => `[${i + 1}] ${c.title} — ${c.url}\n${(c.snippet ?? "").slice(0, 300)}`)
     .join("\n\n");
 }

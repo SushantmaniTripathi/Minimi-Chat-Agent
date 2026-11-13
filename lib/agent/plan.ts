@@ -46,6 +46,11 @@ export interface TurnPlan {
   staleClaims: ClaimRow[];
   /** Search query derived from the claim that needs checking. */
   query: string;
+  /**
+   * One query per claim worth checking, so a turn about five shortlisted tools
+   * verifies five, not the first one. `query` is always `queries[0]`.
+   */
+  queries: string[];
   compare: boolean;
   context: RetrievedContext;
   contextBlock: string;
@@ -59,12 +64,21 @@ export interface TurnPlan {
   presearchQuery: string;
 }
 
+/**
+ * Enough breadth for a shortlist: five tools with a price and a news line each is
+ * seven claims, and a subject dropped by the cap is a subject the answer silently
+ * omits. Beyond this it is noise and rate-limit risk.
+ */
+const MAX_VERIFY_QUERIES = 8;
+
 function searchQueryFor(claim: ClaimRow, topic?: string): string {
   const name = claim.entity_name ?? "";
   const predicate = claim.predicate.replace(/_/g, " ");
   // Disambiguate against the conversation's subject: "Neon price" finds a crypto
-  // token, "Neon price Postgres hosting providers" finds the database.
-  return [name, predicate, topic].filter(Boolean).join(" ").slice(0, 160);
+  // token, "Neon price Postgres hosting providers" finds the database. News
+  // queries are already specific, and a topic suffix makes them worse.
+  const suffix = predicate === "price" || predicate === "availability" ? topic : undefined;
+  return [name, predicate, suffix].filter(Boolean).join(" ").slice(0, 160);
 }
 
 /**
@@ -85,6 +99,29 @@ function conversationTopic(
     if (topic) return topic.canonical_name;
   }
   return undefined;
+}
+
+/**
+ * Subjects mentioned in retrieved history. This is what makes a *new* chat about
+ * "last Tuesday" work at all: the current conversation contains no subject, but
+ * the tenant's history does.
+ */
+function entitiesFromHistory(userId: string, matches: { content: string }[]): EntityRow[] {
+  const seen = new Set<string>();
+  const out: EntityRow[] = [];
+  for (const m of matches) {
+    for (const e of resolveEntities(userId, m.content)) {
+      if (seen.has(e.id)) continue;
+      seen.add(e.id);
+      out.push(e);
+    }
+  }
+  return out;
+}
+
+function mergeEntities(a: EntityRow[], b: EntityRow[]): EntityRow[] {
+  const seen = new Set(a.map((e) => e.id));
+  return [...a, ...b.filter((e) => !seen.has(e.id))];
 }
 
 /**
@@ -117,18 +154,42 @@ export function planTurn(opts: {
   now?: Date;
 }): TurnPlan {
   const now = opts.now ?? new Date();
+  const context = retrieveHistoryContext(opts.userId, opts.message, now);
+
+  // "Is that still true", "has any of them changed since" — cues that the subject
+  // is not in this sentence.
+  const cues = DANGLING_REFERENCE.test(opts.message) || EXPLICIT_VERIFY.test(opts.message);
+  const claimsFor = (list: EntityRow[]) =>
+    activeClaimsForEntities(
+      opts.userId,
+      list.map((e) => e.id)
+    );
 
   let entities = resolveEntities(opts.userId, opts.message);
   let anchored = false;
-  if (entities.length === 0 && opts.conversationId && DANGLING_REFERENCE.test(opts.message)) {
-    entities = anchorEntities(opts.userId, opts.conversationId, opts.message);
-    anchored = entities.length > 0;
+  let claims = claimsFor(entities);
+
+  // 1. Named nothing: inherit the subject of the current conversation.
+  if (entities.length === 0 && opts.conversationId && cues) {
+    const fromConversation = anchorEntities(opts.userId, opts.conversationId, opts.message);
+    if (fromConversation.length > 0) {
+      entities = fromConversation;
+      anchored = true;
+      claims = claimsFor(entities);
+    }
   }
 
-  const claims = activeClaimsForEntities(
-    opts.userId,
-    entities.map((e) => e.id)
-  );
+  // 2. Still no facts: take the subject from the tenant's history. A new chat
+  //    asking "what did I ask on 3 November" has no local subject at all, and
+  //    cross-conversation recall is the whole point of a memory ledger.
+  if (claims.length === 0 && cues) {
+    const fromHistory = entitiesFromHistory(opts.userId, context.matches);
+    if (fromHistory.length > 0) {
+      entities = mergeEntities(entities, fromHistory);
+      anchored = true;
+      claims = claimsFor(entities);
+    }
+  }
 
   const verifiable = claims.filter((c) => c.verify_policy !== "never");
   const staleClaims = verifiable.filter((c) => isStale(c, now));
@@ -141,18 +202,18 @@ export function planTurn(opts: {
     else mode = "recall";
   }
 
-  const context = retrieveHistoryContext(opts.userId, opts.message, now);
   const contextBlock = formatContextForPrompt(context);
   const claimsBlock = formatClaimsForPrompt(claims, now);
 
-  // Which claim the search is *about*. A stale claim always wins; otherwise
-  // prefer one that can actually change (price/availability) over a fact that
-  // never goes stale (release date), because "is that still true?" is almost
-  // never asking us to re-confirm a release date.
-  const target = staleClaims[0] ?? verifiable[0] ?? claims[0];
-  const query = target
-    ? searchQueryFor(target, conversationTopic(opts.userId, entities, opts.conversationId))
-    : "";
+  // Which claims the search is *about*. Stale ones always win; otherwise prefer
+  // facts that can actually change (price/availability) over ones that never go
+  // stale. One query per claim, capped: a five-tool shortlist verifies five.
+  const targets = (
+    staleClaims.length > 0 ? staleClaims : verifiable.length > 0 ? verifiable : claims
+  ).slice(0, MAX_VERIFY_QUERIES);
+  const topic = conversationTopic(opts.userId, entities, opts.conversationId);
+  const queries = [...new Set(targets.map((c) => searchQueryFor(c, topic)).filter(Boolean))];
+  const query = queries[0] ?? "";
 
   // Only pre-search when memory has nothing to say. If we hold a claim, VERIFY
   // already owns the query; if the topic is fresh, searching would be noise.
@@ -168,6 +229,7 @@ export function planTurn(opts: {
     claimViews: claims.map((c) => toClaimView(c, now)),
     staleClaims,
     query,
+    queries,
     compare: mode === "verify" && context.matches.length > 0,
     context,
     contextBlock,

@@ -50,8 +50,10 @@ export default function Home() {
     if (bootstrapped.current) return;
     bootstrapped.current = true;
 
-    // `/?demo=1` seeds a prepared conversation with claims old enough to verify.
-    // Explicit only: a plain visit still starts with an empty tenant.
+    // Every visitor is seeded with dated fixture history on their first request
+    // (see lib/fixtures.ts), so a plain visit is already testable. `/?demo=1`
+    // additionally opens the Postgres conversation directly and re-asserts the
+    // fixtures if they were deleted.
     const wantsDemo = new URLSearchParams(window.location.search).get("demo") === "1";
 
     (async () => {

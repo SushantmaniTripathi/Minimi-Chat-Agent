@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { resolveTenant, tenantCookie } from "@/lib/auth";
-import { seedDemo } from "@/lib/demo";
+import { seedDemo } from "@/lib/fixtures";
 
 /**
  * Explicit, opt-in demo seeding. `/?demo=1` calls this once; nothing else does.

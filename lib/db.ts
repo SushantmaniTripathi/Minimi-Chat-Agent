@@ -115,6 +115,7 @@ INSERT OR IGNORE INTO freshness_policy (predicate, ttl_hours, verify_policy) VAL
   ('price',          24,    'on_stale'),
   ('availability',   12,    'on_stale'),
   ('version',        72,    'on_stale'),
+  ('news',           48,    'on_stale'),
   ('ceo',            720,   'on_stale'),
   ('address',        720,   'on_stale'),
   ('headcount',      720,   'on_stale'),
@@ -305,8 +306,8 @@ export function searchMessages(opts: {
          JOIN messages m ON m.rowid = f.rowid
          JOIN conversations c ON c.id = m.conversation_id
          WHERE messages_fts MATCH ? AND c.user_id = ?
-         ${fromDate ? "AND m.created_at >= ?" : ""}
-         ${toDate ? "AND m.created_at <= ?" : ""}
+         ${fromDate ? "AND datetime(m.created_at) >= datetime(?)" : ""}
+         ${toDate ? "AND datetime(m.created_at) <= datetime(?)" : ""}
          ORDER BY m.created_at DESC LIMIT ?`
       )
       .all(
@@ -319,12 +320,28 @@ export function searchMessages(opts: {
         `SELECT m.* FROM messages m
          JOIN conversations c ON c.id = m.conversation_id
          WHERE c.user_id = ?
-         ${fromDate ? "AND m.created_at >= ?" : ""} ${toDate ? "AND m.created_at <= ?" : ""}
+         ${fromDate ? "AND datetime(m.created_at) >= datetime(?)" : ""}
+         ${toDate ? "AND datetime(m.created_at) <= datetime(?)" : ""}
          ORDER BY m.created_at DESC LIMIT ?`
       )
       .all(...[userId, ...(fromDate ? [fromDate] : []), ...(toDate ? [toDate] : []), limit]) as MessageRow[];
   }
   return [];
+}
+
+/**
+ * Newest turns in the tenant. Used when a date was named but nothing exists on it,
+ * so the answer can say what it *does* have instead of going silent.
+ */
+export function recentMessages(userId: string, limit = 6): MessageRow[] {
+  return db
+    .prepare(
+      `SELECT m.* FROM messages m
+       JOIN conversations c ON c.id = m.conversation_id
+       WHERE c.user_id = ?
+       ORDER BY m.created_at DESC LIMIT ?`
+    )
+    .all(userId, limit) as MessageRow[];
 }
 
 export function insertTurnMetric(row: {

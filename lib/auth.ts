@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { randomUUID } from "crypto";
 import { adoptLegacyRows } from "./db";
+import { seedFixtures } from "./fixtures";
 
 export const USER_COOKIE = "minimi_uid";
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
@@ -31,6 +32,7 @@ export function resolveTenant(req: NextRequest): Tenant {
   if (existing === LEGACY_TENANT) {
     const userId = randomUUID();
     adoptLegacyRows(userId);
+    seedFixtures(userId);
     return { userId, isNew: true };
   }
 
@@ -38,10 +40,13 @@ export function resolveTenant(req: NextRequest): Tenant {
     return { userId: existing, isNew: false };
   }
 
-  // A genuinely new browser gets a private tenant and inherits nothing. Adoption
-  // is deliberately NOT called here: it must only ever happen for the legacy
-  // cookie, or one visitor's arrival would reassign another's conversations.
-  return { userId: randomUUID(), isNew: true };
+  // A genuinely new browser gets a private tenant with the seeded history (see
+  // lib/fixtures.ts) and inherits nothing from anyone else. Adoption is
+  // deliberately NOT called here: it must only happen for the legacy cookie, or
+  // one visitor's arrival would reassign another's conversations.
+  const userId = randomUUID();
+  seedFixtures(userId);
+  return { userId, isNew: true };
 }
 
 export function tenantCookie(userId: string): string {
