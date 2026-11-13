@@ -1,0 +1,117 @@
+@import "tailwindcss";
+
+:root {
+  --background: #fafafa;
+  --surface: #ffffff;
+  --ink: #171717;
+  --body-text: #4d4d4d;
+  --mute: #8f8f8f;
+  --faint: #a1a1a1;
+  --hairline: #ebebeb;
+  --hairline-soft: #f2f2f2;
+  --link: #0070f3;
+  --error: #ee0000;
+  --on-primary: #ffffff;
+  --user-message-text: #ffffff;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-ink: var(--ink);
+  --color-body: var(--body-text);
+  --color-mute: var(--mute);
+  --color-faint: var(--faint);
+  --color-hairline: var(--hairline);
+  --color-hairline-soft: var(--hairline-soft);
+  --color-link: var(--link);
+  --color-error: var(--error);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --surface: #111111;
+    --ink: #ededed;
+    --body-text: #b4b4b4;
+    --mute: #8f8f8f;
+    --faint: #6e6e6e;
+    --hairline: #262626;
+    --hairline-soft: #1c1c1c;
+    --user-message-text: #000000;
+  }
+}
+
+* {
+  border-color: var(--hairline);
+}
+
+body {
+  background: var(--background);
+  color: var(--ink);
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+}
+
+code,
+pre {
+  font-family: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--hairline);
+  border-radius: 100px;
+}
+
+.markdown-body p {
+  margin: 0 0 0.75em 0;
+}
+.markdown-body p:last-child {
+  margin-bottom: 0;
+}
+.markdown-body pre {
+  background: var(--hairline-soft);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  padding: 16px;
+  overflow-x: auto;
+  font-size: 13px;
+}
+.markdown-body code {
+  background: var(--hairline-soft);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 0.9em;
+}
+.markdown-body pre code {
+  background: none;
+  padding: 0;
+}
+.markdown-body ul,
+.markdown-body ol {
+  margin: 0 0 0.75em 0;
+  padding-left: 1.4em;
+}
+.markdown-body a {
+  color: var(--link);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3 {
+  font-weight: 600;
+  margin: 1em 0 0.4em 0;
+  letter-spacing: -0.3px;
+}
+.markdown-body blockquote {
+  border-left: 2px solid var(--hairline);
+  margin: 0 0 0.75em 0;
+  padding-left: 12px;
+  color: var(--body-text);
+}
