@@ -330,6 +330,7 @@ All four phases are implemented and running. Where each piece lives:
 |---|---|
 | Schema, migrations, every query | `lib/db.ts` |
 | Tenant identity + first-visit adoption | `lib/auth.ts` |
+| Opt-in demo seed (`/?demo=1`) | `lib/demo.ts`, `app/api/demo/route.ts` |
 | Deterministic planner (`RECALL`/`VERIFY`/`ANSWER`, anchoring, presearch) | `lib/agent/plan.ts` |
 | Entities, freshness predicate, claim supersede | `lib/agent/claims.ts` |
 | History/FTS retrieval + date parsing | `lib/agent/retrieval.ts` |
@@ -341,7 +342,7 @@ All four phases are implemented and running. Where each piece lives:
 | Streaming route + `after()` extraction | `app/api/chat/route.ts` |
 | Memory chips / mode footer | `components/Message.tsx` |
 
-Three maintenance notes:
+Five maintenance notes:
 
 - **`local` is a migration marker, not a tenant.** Before tenants existed, every
   browser was handed the literal cookie value `local`. When `lib/auth.ts` sees it,
@@ -351,6 +352,15 @@ Three maintenance notes:
   every old chat returning 404. Both list/detail responses also send
   `Cache-Control: no-store`, because a cached tenant-scoped list is the same bug in
   a different disguise.
+- **Demo seeding is opt-in and per-visitor.** `/?demo=1` materialises a prepared
+  conversation with nine-day-old price claims into the caller's own tenant; a normal
+  visit still starts empty, because inventing history is indistinguishable from
+  remembering something you were never told. Ids are deterministic per tenant, so
+  reopening the link is a no-op.
+- **One subject, one entity.** Entity identity is the canonical name, not
+  `(kind, name)`. The extractor calls the same subject a "product" in one turn and
+  an "org" in the next; keying on kind split one subject into two rows, each with its
+  own active claim.
 - **Groq rotates its free catalogue.** `llama-3.3-70b-versatile` was gone by the
   time this was built; `openai/gpt-oss-20b` is the current default. If extraction
   silently stops, check `GET https://api.groq.com/openai/v1/models` first.

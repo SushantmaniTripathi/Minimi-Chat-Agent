@@ -39,6 +39,7 @@ export async function POST(req: NextRequest) {
   let answer = "";
   let usedSearch = false;
   let sourceUrl: string | null = null;
+  let anchoredEntities: string[] = [];
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
@@ -52,6 +53,9 @@ export async function POST(req: NextRequest) {
           if (event.type === "meta") {
             usedSearch = event.usedSearch;
             sourceUrl = event.citations[0]?.url ?? null;
+            // Cancelled on purpose: the planner's subjects are known before the
+            // first byte, so a later empty meta must not erase them.
+            if (event.entities?.length) anchoredEntities = event.entities;
           }
           controller.enqueue(encoder.encode(JSON.stringify(event) + "\n"));
         }
@@ -80,6 +84,7 @@ export async function POST(req: NextRequest) {
       answer,
       usedSearch,
       sourceUrl,
+      anchoredEntities,
     });
   });
 

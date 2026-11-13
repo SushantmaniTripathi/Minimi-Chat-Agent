@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Sidebar from "@/components/Sidebar";
 import TopBar from "@/components/TopBar";
 import ChatArea from "@/components/ChatArea";
@@ -14,6 +14,12 @@ export default function Home() {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  /**
+   * One bootstrap per mount. React re-runs mount effects in dev, and two parallel
+   * first requests could each mint a tenant — the seed would land in one while the
+   * page lists the other.
+   */
+  const bootstrapped = useRef(false);
 
   const refreshConversations = useCallback(async () => {
     const res = await fetch("/api/conversations");
@@ -21,11 +27,7 @@ export default function Home() {
     setConversations(data.conversations ?? []);
   }, []);
 
-  useEffect(() => {
-    refreshConversations();
-  }, [refreshConversations]);
-
-  async function loadConversation(id: string) {
+  const loadConversation = useCallback(async (id: string) => {
     setActiveId(id);
     const res = await fetch(`/api/conversations/${id}`);
     if (!res.ok) return;
@@ -42,7 +44,29 @@ export default function Home() {
         createdAt: m.created_at,
       }))
     );
-  }
+  }, []);
+
+  useEffect(() => {
+    if (bootstrapped.current) return;
+    bootstrapped.current = true;
+
+    // `/?demo=1` seeds a prepared conversation with claims old enough to verify.
+    // Explicit only: a plain visit still starts with an empty tenant.
+    const wantsDemo = new URLSearchParams(window.location.search).get("demo") === "1";
+
+    (async () => {
+      if (wantsDemo) {
+        const res = await fetch("/api/demo");
+        if (res.ok) {
+          const { conversationId } = await res.json();
+          // Drop the param so a reload doesn't re-seed; the chat itself stays.
+          window.history.replaceState({}, "", window.location.pathname);
+          await loadConversation(conversationId);
+        }
+      }
+      await refreshConversations();
+    })();
+  }, [loadConversation, refreshConversations]);
 
   function startNewChat() {
     setActiveId(null);

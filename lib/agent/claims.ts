@@ -57,6 +57,20 @@ export function upsertEntity(
   aliases: string[] = []
 ): EntityRow {
   const name = canonicalName.trim();
+  // Identity is the name, not the kind. The extractor calls the same subject a
+  // "product" in one turn and an "org" in the next; keying on (kind, name) then
+  // splits one subject into two entity rows, each with its own active claim.
+  const byName = db
+    .prepare(`SELECT * FROM entities WHERE user_id = ? AND canonical_name = ? COLLATE NOCASE LIMIT 1`)
+    .get(userId, name) as EntityRow | undefined;
+  if (byName) {
+    const merged = new Set<string>([...JSON.parse(byName.aliases ?? "[]"), ...aliases]);
+    if (merged.size !== JSON.parse(byName.aliases ?? "[]").length) {
+      db.prepare(`UPDATE entities SET aliases = ? WHERE id = ?`).run(JSON.stringify([...merged]), byName.id);
+    }
+    return { ...byName, aliases: JSON.stringify([...merged]) };
+  }
+
   insertEntity.run(randomUUID(), userId, kind, name, JSON.stringify(aliases));
   const row = selectEntityByName.get(userId, kind, name) as EntityRow | undefined;
   if (row) {

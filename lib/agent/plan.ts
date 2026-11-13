@@ -17,9 +17,11 @@ const EXPLICIT_VERIFY =
  * A follow-up like "is that still true?" names no entity. Without anchoring it
  * would fall through to ANSWER with an empty memory block — the exact case the
  * ledger exists for. These cues mean "the thing we were just talking about".
+ * `then` carries "has anything changed since then?", which is the canonical
+ * temporal follow-up and names nothing at all.
  */
 const DANGLING_REFERENCE =
-  /\b(that|this|it|those|these|they|them|its|their|the same|there|again|still true|still the case)\b/i;
+  /\b(that|this|it|those|these|they|them|its|their|the same|there|again|still true|still the case|then|back then|last time|earlier)\b/i;
 
 const ANCHOR_WINDOW = 4;
 
@@ -57,10 +59,32 @@ export interface TurnPlan {
   presearchQuery: string;
 }
 
-function searchQueryFor(claim: ClaimRow): string {
+function searchQueryFor(claim: ClaimRow, topic?: string): string {
   const name = claim.entity_name ?? "";
   const predicate = claim.predicate.replace(/_/g, " ");
-  return `${name} ${predicate}`.trim();
+  // Disambiguate against the conversation's subject: "Neon price" finds a crypto
+  // token, "Neon price Postgres hosting providers" finds the database.
+  return [name, predicate, topic].filter(Boolean).join(" ").slice(0, 160);
+}
+
+/**
+ * The claim names one entity; the conversation names the subject. Anchoring
+ * usually returns only the most recent subject, so fall back to the opening turns,
+ * where the topic is normally stated — that's the context the query is missing.
+ */
+function conversationTopic(
+  userId: string,
+  entities: EntityRow[],
+  conversationId?: string
+): string | undefined {
+  const direct = entities.find((e) => e.kind === "topic");
+  if (direct) return direct.canonical_name;
+  if (!conversationId) return undefined;
+  for (const m of getMessages(conversationId).slice(0, 3)) {
+    const topic = resolveEntities(userId, m.content).find((e) => e.kind === "topic");
+    if (topic) return topic.canonical_name;
+  }
+  return undefined;
 }
 
 /**
@@ -126,7 +150,9 @@ export function planTurn(opts: {
   // never goes stale (release date), because "is that still true?" is almost
   // never asking us to re-confirm a release date.
   const target = staleClaims[0] ?? verifiable[0] ?? claims[0];
-  const query = target ? searchQueryFor(target) : "";
+  const query = target
+    ? searchQueryFor(target, conversationTopic(opts.userId, entities, opts.conversationId))
+    : "";
 
   // Only pre-search when memory has nothing to say. If we hold a claim, VERIFY
   // already owns the query; if the topic is fresh, searching would be noise.

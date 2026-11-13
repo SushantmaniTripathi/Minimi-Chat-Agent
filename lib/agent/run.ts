@@ -41,6 +41,12 @@ export type AgentEvent =
       citations: Citation[];
       model: string | null;
       searchNote?: string;
+      /**
+       * Subjects the planner attached to this turn, including ones inherited from
+       * an earlier message ("since then"). Extraction uses them to know which
+       * entities the user pointed at without naming.
+       */
+      entities?: string[];
     }
   | { type: "status"; label: string }
   | { type: "delta"; text: string }
@@ -52,8 +58,12 @@ export type AgentEvent =
  * model pull it through the tool instead. Waiting is the cheaper option: the
  * tool path costs a whole extra model round trip (~10–25s on a free tier),
  * while a search usually lands in 1–3s.
+ *
+ * This is deliberately a little longer than the provider's own 6s request
+ * timeout: at 5s the wait could give up on a search that was about to succeed,
+ * turning a grounded answer into "I couldn't confirm that just now".
  */
-const SEARCH_WAIT_MS = 5000;
+const SEARCH_WAIT_MS = 6500;
 
 function delay(ms: number): Promise<null> {
   return new Promise((resolve) => setTimeout(() => resolve(null), ms));
@@ -80,6 +90,7 @@ export async function* runAgent(
     usedSearch: false,
     citations: [],
     model: null,
+    entities: plan.entities.map((e) => e.canonical_name),
   };
 
   // 3. When the planner already knows a live lookup is needed, start it before
@@ -99,7 +110,7 @@ export async function* runAgent(
   // Only a search that overruns the budget is left for the model to pull via the
   // tool (served from this same promise, so it is never fetched twice).
   const searchStarted = Date.now();
-  let evidence: SearchOutcome | null = searchP ? await Promise.race([searchP, delay(SEARCH_WAIT_MS)]) : null;
+  const evidence: SearchOutcome | null = searchP ? await Promise.race([searchP, delay(SEARCH_WAIT_MS)]) : null;
   const searchMs = evidence ? Date.now() - searchStarted : 0;
 
   let citations: Citation[] = evidence?.ok ? evidence.results : [];

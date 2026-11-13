@@ -32,6 +32,7 @@ Return ONLY compact JSON, no prose and no code fences:
 Rules:
 - entity: the concrete thing the fact is about (product, company, person, place). Use the surface form the user used.
   It must be something the USER named or asked about — never an incidental item the answer happened to list.
+  A follow-up like "has that changed since then?" is still about the earlier subject; extract that subject, not the pronoun.
 - kind: one of product | org | person | place | topic | self
 - predicate: one of price | availability | version | ceo | address | headcount | user_role | user_preference | release_date
 - value: the shortest standalone value, e.g. "$20/mo", "2026-11-03", "Satya Nadella", "founder"
@@ -91,6 +92,22 @@ function mentionedByUser(entity: string, userMessage: string): boolean {
 }
 
 /**
+ * A subject the user pointed at without naming — "has that changed since then?".
+ * Without this, a verified value can never be written back on a follow-up: the
+ * entity was named three turns ago, so `mentionedByUser` rejects it and the ledger
+ * keeps asserting the value the search just disproved.
+ */
+function referredTo(entity: string, anchored: Set<string>): boolean {
+  const e = entity.trim().toLowerCase();
+  if (!e) return false;
+  if (anchored.has(e)) return true;
+  for (const a of anchored) {
+    if (a.includes(e) || e.includes(a)) return true;
+  }
+  return false;
+}
+
+/**
  * Runs in `after()` — after the response is flushed, so it costs the user zero
  * latency, and on Groq's separate quota so it can't starve the chat path.
  * Must never throw: a failed extraction loses one fact, a thrown error loses the run.
@@ -102,10 +119,14 @@ export async function extractClaims(opts: {
   answer: string;
   usedSearch: boolean;
   sourceUrl?: string | null;
+  /** Subjects the planner attached to this turn (named or inherited). */
+  anchoredEntities?: string[];
 }): Promise<void> {
   if (!groqProvider.enabled) return;
   if (!shouldExtract(opts.userMessage, opts.answer, opts.usedSearch)) return;
   if (opts.answer.trim().length < 20) return;
+
+  const anchored = new Set((opts.anchoredEntities ?? []).map((s) => s.trim().toLowerCase()));
 
   try {
     const result = await groqProvider.chat([
@@ -119,7 +140,7 @@ export async function extractClaims(opts: {
     let raw = "";
     for await (const chunk of result.stream) raw += chunk;
     const claims = parseClaims(raw).filter(
-      (c) => c.kind === "self" || mentionedByUser(c.entity, opts.userMessage)
+      (c) => c.kind === "self" || mentionedByUser(c.entity, opts.userMessage) || referredTo(c.entity, anchored)
     );
     if (claims.length === 0) return;
 

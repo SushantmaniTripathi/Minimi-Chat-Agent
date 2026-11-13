@@ -45,7 +45,6 @@ export default function Message({ message }: { message: ChatMessageView }) {
             {message.mode === "recall" && <span>from memory</span>}
             {message.mode === "verify" && <span>{message.usedSearch ? "checked live" : "couldn't verify"}</span>}
             {message.usedSearch && message.mode !== "verify" && <span>searched web</span>}
-            {message.modelUsed && <span>{message.modelUsed}</span>}
           </div>
         )}
       </div>
