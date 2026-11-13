@@ -10,7 +10,7 @@ hiring challenge. Full trade-offs are in [DESIGN.md](./DESIGN.md).
 **Contents**
 
 1. [What it does](#1-what-it-does)
-2. [The 60-second architecture](#2-the-60-second-architecture)
+2. [Architecture](#2-the-60-second-architecture)
 3. [Quick start](#3-quick-start)
 4. [Environment variables](#4-environment-variables)
 5. [Seeded history](#5-seeded-history)
@@ -42,7 +42,7 @@ One message, three behaviours:
 
 ---
 
-## 2. The 60-second architecture
+## 2. Architecture
 
 **One-liner:** it is a chat agent whose memory is a ledger of facts with expiry
 dates — when a fact goes stale, it checks the live web *before* the model runs.
@@ -60,29 +60,7 @@ flowchart TD
   A -. dated recall .-> R[Find that day's turns,<br/>reload the facts, re-check]
   R --> F
 ```
-
-### Say this (about 150 words, ~1 minute)
-
-> **0:00 —** “Minimi is a chat agent with two layers: the conversation, and a
-> memory of facts. Not chat logs — facts.”
->
-> **0:10 —** “Every message hits a small planner first. No AI call, under five
-> milliseconds. It asks: do I already know something about this subject?”
->
-> **0:20 —** “Each fact is stored with a timestamp and a freshness window. Price
-> lasts a day, news two days, a release date never expires. Like milk.”
->
-> **0:30 —** “If the fact is still fresh, it answers from memory. If it’s stale,
-> the planner turns *each* stale fact into a web search — all in parallel, before
-> the model runs. Five CRM tools means five checks, at once.”
->
-> **0:42 —** “Then one model call gets the memory plus those results, grouped per
-> claim, and answers with citations. No extra round trip just to decide whether to
-> search.”
->
-> **0:52 —** “After the answer is sent, a small model saves the new facts — keeping
-> the old value, marked superseded. So next time it can say exactly what changed,
-> and when. That’s the whole thing: memory that knows when it’s out of date.”
+  
 
 ### If they push back
 
