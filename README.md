@@ -60,19 +60,10 @@ flowchart TD
   A -. dated recall .-> R[Find that day's turns,<br/>reload the facts, re-check]
   R --> F
 ```
-  
 
-### If they push back
+##  Live Demo :
 
-- **“Why not just RAG / embeddings?”** — Similarity tells you what is *related*,
-  not *when* a fact was true. You cannot audit it, and you cannot tell whether a
-  price came from March or this morning.
-- **“Why not let the model decide when to search?”** — That is a coin flip with a
-  system prompt. Staleness is a SQL predicate; rules belong in code.
-- **“Why search before the model?”** — A tool round trip costs 10–25 s on a free
-  tier. One grounded call is 8–12 s.
-
----
+<img width="1081" height="645" alt="image" src="https://github.com/user-attachments/assets/28c4ab74-88e2-4019-91e9-224e98f844f9" />
 
 ## 3. Quick start
 
